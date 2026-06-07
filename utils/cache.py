@@ -1,10 +1,11 @@
+import hashlib
 import json
 import os
 import time
 from pathlib import Path
 
 CACHE_DIR = Path(__file__).parent.parent / "cache"
-CACHE_TTL = 3600  # 1 hour
+CACHE_TTL = 21600  # 6 hours
 
 
 class FileCache:
@@ -12,7 +13,8 @@ class FileCache:
         CACHE_DIR.mkdir(exist_ok=True)
 
     def _path(self, key: str) -> Path:
-        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in key)
+        # MD5ハッシュを使用して日本語文字のキー衝突を防ぐ
+        safe = hashlib.md5(key.encode("utf-8")).hexdigest()
         return CACHE_DIR / f"{safe}.json"
 
     def get(self, key: str):

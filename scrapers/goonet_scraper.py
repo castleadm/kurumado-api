@@ -460,10 +460,10 @@ def scrape_goonet(maker: str, model: str, year: int) -> list[dict]:
         return []
 
     maker_code, model_code = codes
-    logger.info(f"goonet scraping: brand-{maker_code}/car-{model_code}/ pages=1-4")
+    logger.info(f"goonet scraping: brand-{maker_code}/car-{model_code}/ pages=1-3")
 
     all_listings = []
-    for page in range(1, 5):
+    for page in range(1, 4):
         listings = _fetch_goonet(maker_code, model_code, page)
         if not listings:
             break
