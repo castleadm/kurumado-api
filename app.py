@@ -28,7 +28,7 @@ _BASELINE_RESALE = {
 }
 
 
-def _calc_median_price(listings: list[dict], year: int, mileage_km: float) -> tuple[float | None, float | None, int]:
+def _calc_median_price(listings: list[dict], year: int, mileage_km: float) -> tuple:
     """同年式±1・走行距離±50%でフィルタして中央値とP25を返す"""
     mileage = int(mileage_km * 10000)
     year_ok = [l for l in listings if l.get("year") and abs(l["year"] - year) <= 1]
@@ -58,7 +58,9 @@ def _calc_median_price(listings: list[dict], year: int, mileage_km: float) -> tu
 
     median = float(np.median(prices))
     p25 = float(np.percentile(prices, 25)) if len(prices) >= 3 else None
-    return median, p25, len(km_filtered)
+    price_min = float(min(prices))
+    price_max = float(max(prices))
+    return median, p25, len(km_filtered), price_min, price_max
 
 
 def _score_resale(resale_rate: float, age: int) -> tuple[str, int]:
@@ -122,7 +124,10 @@ def resale_score():
             cache.set(cache_key, listings)
 
     # 市場価格の計算（グーネット中央値）
-    median_price, p25_price, sample_count = _calc_median_price(listings or [], year, mileage_km)
+    result_tuple = _calc_median_price(listings or [], year, mileage_km)
+    median_price, p25_price, sample_count = result_tuple[0], result_tuple[1], result_tuple[2]
+    price_min = result_tuple[3] if len(result_tuple) > 3 else None
+    price_max = result_tuple[4] if len(result_tuple) > 4 else None
 
     # 有効価格: ユーザー入力 > グーネット中央値
     effective_price = market_price_input if market_price_input > 0 else median_price
@@ -133,6 +138,8 @@ def resale_score():
         return jsonify({
             "market_price_median": median_price,
             "market_price_p25": p25_price,
+            "price_min": price_min,
+            "price_max": price_max,
             "sample_count": sample_count,
             "resale_rate": None,
             "rank": None,
@@ -147,6 +154,8 @@ def resale_score():
     return jsonify({
         "market_price_median": median_price,
         "market_price_p25": p25_price,
+        "price_min": price_min,
+        "price_max": price_max,
         "sample_count": sample_count,
         "effective_price": effective_price,
         "new_price_used": new_price,
@@ -156,6 +165,7 @@ def resale_score():
         "reason": reason,
         "car_age": current_age,
         "baseline_resale": _BASELINE_RESALE.get(min(current_age, 10)),
+        "source": "グーネット（goo-net.com）",
     })
 
 
