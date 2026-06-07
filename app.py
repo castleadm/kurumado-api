@@ -92,79 +92,95 @@ def index():
 def resale_score():
     """
     クエリパラメータ:
-      maker        - メーカー名（日本語）
-      model        - 車種名（日本語 or NHTSA英語名）
-      year         - 年式（例: 2022）
-      mileage      - 現在の走行距離（万km、例: 3.5）
-      new_price    - グレードDBからの新車価格（万円）
-      market_price - ユーザー入力の実勢価格（万円、省略可）
+      maker     - メーカー名（日本語）
+      model     - 車種名（日本語 or NHTSA英語名）
+      new_price - グレードの新車価格（万円）
+      grade     - グレード名（表示用）
     """
     maker = request.args.get("maker", "").strip()
     model = request.args.get("model", "").strip()
+    grade = request.args.get("grade", "").strip()
     try:
-        year = int(request.args.get("year", 2020))
-        mileage_km = float(request.args.get("mileage", 3.0))
         new_price = float(request.args.get("new_price", 0))
-        market_price_input = float(request.args.get("market_price", 0))
     except (ValueError, TypeError):
         return jsonify({"error": "パラメータ不正"}), 400
 
     if not maker or not model:
         return jsonify({"error": "maker・modelは必須"}), 400
+    if new_price <= 0:
+        return jsonify({"error": "new_priceは必須（グレードを選択してください）"}), 400
 
-    if not (1960 <= year <= CURRENT_YEAR):
-        return jsonify({"error": "年式が範囲外"}), 400
-
-    # キャッシュ確認（グーネット結果を5時間キャッシュ）
-    cache_key = f"resale_{maker}_{model}_{year}"
+    # キャッシュ確認（グーネット全件を6時間キャッシュ）
+    cache_key = f"resale_all_{maker}_{model}"
     listings = cache.get(cache_key)
     if listings is None:
-        listings = scrape_goonet(maker, model, year)
+        listings = scrape_goonet(maker, model, CURRENT_YEAR)
         if listings:
             cache.set(cache_key, listings)
 
-    # 市場価格の計算（グーネット中央値）
-    result_tuple = _calc_median_price(listings or [], year, mileage_km)
-    median_price, p25_price, sample_count = result_tuple[0], result_tuple[1], result_tuple[2]
-    price_min = result_tuple[3] if len(result_tuple) > 3 else None
-    price_max = result_tuple[4] if len(result_tuple) > 4 else None
+    listings = listings or []
 
-    # 有効価格: ユーザー入力 > グーネット中央値
-    effective_price = market_price_input if market_price_input > 0 else median_price
+    # 車齢1〜7年ごとに中央値・残価率を集計
+    residuals = []
+    for age in range(1, 8):
+        target_year = CURRENT_YEAR - age
+        age_listings = [l for l in listings if l.get("year") == target_year]
+        if not age_listings:
+            # ±1年まで許容
+            age_listings = [l for l in listings if l.get("year") and abs(l["year"] - target_year) <= 1]
+        if len(age_listings) < 2:
+            residuals.append({"age": age, "year": target_year, "median": None,
+                               "rate": None, "count": len(age_listings)})
+            continue
 
-    current_age = CURRENT_YEAR - year
+        prices = sorted(l["price"] for l in age_listings if l.get("price"))
+        # IQR外れ値除去
+        if len(prices) >= 4:
+            q1, q3 = prices[len(prices)//4], prices[3*len(prices)//4]
+            iqr = q3 - q1
+            prices = [p for p in prices if q1 - 1.5*iqr <= p <= q3 + 1.5*iqr]
+        if not prices:
+            continue
 
-    if not effective_price or not new_price:
-        return jsonify({
-            "market_price_median": median_price,
-            "market_price_p25": p25_price,
-            "price_min": price_min,
-            "price_max": price_max,
-            "sample_count": sample_count,
-            "resale_rate": None,
-            "rank": None,
-            "score": None,
-            "reason": None,
-            "error": "価格データ不足（新車価格またはグーネット価格が取得できませんでした）",
+        median = round(float(np.median(prices)), 1)
+        rate   = round(median / new_price * 100, 1)
+        residuals.append({
+            "age": age, "year": target_year,
+            "median": median, "rate": rate,
+            "count": len(age_listings),
+            "price_min": round(min(prices), 1),
+            "price_max": round(max(prices), 1),
+            "baseline": _BASELINE_RESALE.get(age),
         })
 
-    resale_rate = round(effective_price / new_price * 100, 1)
-    rank, score, reason = _score_resale(resale_rate, current_age)
+    # ランク判定: 3年データ優先、なければ最も近い年のデータを使用
+    valid = [r for r in residuals if r.get("rate") is not None]
+    if not valid:
+        return jsonify({
+            "residuals": residuals,
+            "rank": None, "score": None, "reason": None,
+            "sample_count": len(listings),
+            "new_price_used": new_price,
+            "grade": grade,
+            "source": "グーネット（goo-net.com）",
+            "error": "市場データが不足しています（掲載件数が少ない車種の可能性があります）",
+        })
+
+    primary = next((r for r in valid if r["age"] == 3), None) or \
+              min(valid, key=lambda r: abs(r["age"] - 3))
+
+    rank, score, reason = _score_resale(primary["rate"], primary["age"])
 
     return jsonify({
-        "market_price_median": median_price,
-        "market_price_p25": p25_price,
-        "price_min": price_min,
-        "price_max": price_max,
-        "sample_count": sample_count,
-        "effective_price": effective_price,
-        "new_price_used": new_price,
-        "resale_rate": resale_rate,
+        "residuals": residuals,
         "rank": rank,
         "score": score,
         "reason": reason,
-        "car_age": current_age,
-        "baseline_resale": _BASELINE_RESALE.get(min(current_age, 10)),
+        "primary_age": primary["age"],
+        "primary_rate": primary["rate"],
+        "sample_count": len(listings),
+        "new_price_used": new_price,
+        "grade": grade,
         "source": "グーネット（goo-net.com）",
     })
 
