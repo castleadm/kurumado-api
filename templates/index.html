@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>中古車値下がり予測ツール</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<header>
+  <h1>中古車 値下がり予測ツール</h1>
+  <p>グーネットから実際の市場価格を取得し、欧州市場データ（AutoScout24）と比較して買取価格を算出</p>
+</header>
+
+<div class="container">
+
+  <!-- 入力パネル -->
+  <div class="card">
+    <h2>車両情報を入力</h2>
+
+    <div id="error-box" class="error-box"></div>
+
+    <div class="form-group">
+      <label>メーカー</label>
+      <input id="maker" type="text" placeholder="例: ポルシェ / Porsche" value="ポルシェ">
+    </div>
+
+    <div class="form-group">
+      <label>車種名</label>
+      <input id="model" type="text" placeholder="例: マカン / Macan" value="マカン">
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>年式</label>
+        <input id="year" type="number" placeholder="例: 2019" value="2019" min="1990" max="2026">
+      </div>
+      <div class="form-group">
+        <label>走行距離 (km)</label>
+        <input id="mileage" type="number" placeholder="例: 33000" value="33000" min="0">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>年間走行距離 (km)</label>
+      <input id="annual_mileage" type="number" placeholder="例: 10000" value="10000" min="0">
+    </div>
+
+    <!-- ──────── 追加フィールド ──────── -->
+    <div class="form-section-title">車両の詳細条件</div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>グレード</label>
+        <select id="grade">
+          <option value="base">ベース / 標準グレード</option>
+          <option value="mid">中間グレード（S / Sport等）</option>
+          <option value="high">上位グレード（GTS / AMG等）</option>
+          <option value="top">最上位 / 特別仕様（Turbo等）</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>修復歴</label>
+        <select id="repair_history">
+          <option value="none">なし（無事故）</option>
+          <option value="minor">軽微な修復あり</option>
+          <option value="major">重大な修復あり</option>
+          <option value="unknown">不明</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>車両状態</label>
+      <select id="condition">
+        <option value="excellent">良好（内外装ほぼ無傷）</option>
+        <option value="good" selected>普通（年式相応）</option>
+        <option value="fair">難あり（傷・汚れ目立つ）</option>
+        <option value="poor">要整備（大きな不具合あり）</option>
+      </select>
+    </div>
+
+    <button id="predict-btn" class="btn-primary" onclick="predict()">
+      値下がりを予測する
+    </button>
+
+    <div id="cache-notice" class="cache-notice" style="display:none">
+      <span class="cache-dot"></span>
+      キャッシュデータを使用中
+      <button class="btn-sm" onclick="clearCache()">最新データを取得</button>
+    </div>
+
+    <!-- プリセット例 -->
+    <div style="margin-top:20px">
+      <div class="hint" style="margin-bottom:8px; font-weight:600">クイック入力例:</div>
+      <div style="display:flex; flex-wrap:wrap; gap:6px">
+        <button class="btn-sm" data-preset="ポルシェ|マカン|2019|33000">マカン 2019</button>
+        <button class="btn-sm" data-preset="トヨタ|プリウス|2020|50000">プリウス 2020</button>
+        <button class="btn-sm" data-preset="トヨタ|ランドクルーザー|2021|30000">ランクル 2021</button>
+        <button class="btn-sm" data-preset="ホンダ|N-BOX|2022|25000">N-BOX 2022</button>
+        <button class="btn-sm" data-preset="スズキ|ジムニー|2019|40000">ジムニー 2019</button>
+        <button class="btn-sm" data-preset="BMW|3シリーズ|2020|40000">BMW 3シリーズ 2020</button>
+        <button class="btn-sm" data-preset="メルセデス|Gクラス|2020|25000">Gクラス 2020</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 結果パネル -->
+  <div>
+    <!-- Loading -->
+    <div id="loading" class="loading card">
+      <div class="spinner"></div>
+      <p id="loading-msg">市場データを収集・分析中...</p>
+      <p style="margin-top:8px; font-size:0.8rem; color:var(--text-muted)">
+        グーネットから市場価格を取得・欧州市場データと比較しています<br>
+        （初回は15〜30秒かかる場合があります）
+      </p>
+    </div>
+
+    <!-- Empty state -->
+    <div id="empty-state" class="card empty-state">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+      </svg>
+      <p>左のフォームに車両情報を入力して<br>「値下がりを予測する」をクリックしてください</p>
+    </div>
+
+    <!-- Results -->
+    <div id="result-panel" class="result-panel">
+
+      <!-- Summary -->
+      <div class="card" style="margin-bottom:16px">
+        <h2>市場データサマリー</h2>
+        <div class="summary-grid">
+          <div class="stat-card">
+            <div class="label">市場売値（現在推定）</div>
+            <div class="value" id="current-price">---</div>
+            <div class="sub" id="price-source">販売店掲載価格ベース</div>
+          </div>
+          <div class="stat-card stat-card--buyback">
+            <div class="label">買取価格目安</div>
+            <div class="value" id="buyback-price" style="color:var(--success)">---</div>
+            <div class="sub" id="buyback-ratio-info">売値の---%</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">市場価格帯（売値）</div>
+            <div class="value" style="font-size:1.1rem" id="market-median">---</div>
+            <div class="sub" id="market-range">---</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">収集データ数</div>
+            <div class="value" id="data-points">0</div>
+            <div class="sub" id="brand-info">件</div>
+          </div>
+          <div class="stat-card" id="rating-card">
+            <div class="label">5年後 残価評価</div>
+            <div class="value" id="residual-rating" style="font-size:2rem; letter-spacing:-0.02em">---</div>
+            <div class="sub" id="residual-rating-sub"></div>
+          </div>
+        </div>
+
+        <!-- 車両条件バッジ -->
+        <div id="condition-badges" class="source-badges" style="margin-bottom:8px"></div>
+        <div id="source-badges" class="source-badges"></div>
+      </div>
+
+      <!-- Chart -->
+      <div class="card" style="margin-bottom:16px">
+        <h2>価格予測グラフ（1〜10年後）</h2>
+        <div class="chart-container">
+          <canvas id="price-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="card">
+        <h2>年次値下がり予測</h2>
+        <div style="overflow-x:auto">
+          <table class="pred-table">
+            <thead>
+              <tr>
+                <th>予測年</th>
+                <th>車齢</th>
+                <th>推定走行距離</th>
+                <th>市場売値</th>
+                <th>買取価格目安</th>
+                <th>年次下落率</th>
+                <th>累計下落率</th>
+                <th>評価</th>
+              </tr>
+            </thead>
+            <tbody id="pred-tbody"></tbody>
+          </table>
+        </div>
+
+        <div id="method-info" class="method-info"></div>
+
+        <div style="margin-top:14px; font-size:0.75rem; color:var(--text-muted); line-height:1.7">
+          ※ <strong>市場売値</strong>はグーネットの販売店掲載価格（車両本体価格）を基準にしています。取得できない場合は新車価格×減価率で推定します。<br>
+          ※ <strong>買取価格目安</strong>はブランド別比率（74〜97%）と欧州市場データ（AutoScout24）を比較し、高い方を採用します。<br>
+          ※ 修復歴ありの場合、年次減価率に追加で10〜18%上乗せされます。<br>
+          ※ 予測は参考値です。実際の価格は車両状態・需給・経済状況で変動します。
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

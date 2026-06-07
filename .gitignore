@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv/
+venv/
+env/
+cache/
+*.json
+!package.json
+data/
+*.bat
+*.log
+.DS_Store
