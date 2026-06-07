@@ -88,6 +88,12 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/ping")
+def ping():
+    """サーバー死活確認用エンドポイント（Renderのスリープ解除に使用）"""
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/resale-score")
 def resale_score():
     """
